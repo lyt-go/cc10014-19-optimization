@@ -8,7 +8,13 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-from app.schemas import ActionPayload, ActionResult, EntryPayload, PageResult
+from app.schemas import (
+    ActionResult,
+    CorrectionPayload,
+    EntryPayload,
+    PageResult,
+    SignActionPayload,
+)
 from app.services import SERVICE_INSTANCES, service_for
 from app.store import store
 
@@ -93,9 +99,54 @@ def create_entry(module: str, payload: EntryPayload) -> ActionResult:
 
 
 @router.post("/{module}/{entry_id}/actions", response_model=ActionResult)
-def run_action(module: str, entry_id: int, payload: ActionPayload) -> ActionResult:
+def run_action(module: str, entry_id: int, payload: SignActionPayload) -> ActionResult:
     service = require_service(module)
-    entry, message = service.run_action(entry_id, payload.action.strip())
+    # 仅验收签署透传复检编号，其它模块忽略该字段，保持原动作契约
+    context: dict[str, Any] = {"reinspect_ids": payload.reinspect_ids or []}
+    entry, message = service.run_action(entry_id, payload.action.strip(), context)
+    return ActionResult(ok=entry is not None, message=message, entry=entry)
+
+
+# ── 验收签署：复检依据筛选与结论更正 ──
+
+@router.get("/acceptance_record/{entry_id}/signing-options")
+def acceptance_signing_options(entry_id: int) -> dict[str, Any]:
+    """从验收记录定位同工序、同检查项目可用于签署的复检候选。
+
+    返回可选复检、不可用复检及原因、原缺陷与仍待处理项目，
+    验收员刷新（含被退回记录）时据此找到下一次可选复检。
+    """
+    acceptance = service_for("acceptance_record").get_entry(entry_id)
+    if acceptance is None:
+        raise HTTPException(status_code=404, detail=f"验收报告 {entry_id} 不存在或已归档")
+    return service_for("reinspect").signing_options(entry_id)
+
+
+@router.post("/acceptance_record/{entry_id}/sign", response_model=ActionResult)
+def acceptance_sign(entry_id: int, payload: SignActionPayload) -> ActionResult:
+    """按勾选的复检编号发起签署；编号与检查清单中的复检编号一致。"""
+    service = require_service("acceptance_record")
+    entry, message = service.run_action(
+        entry_id,
+        payload.action.strip() or "签署验收",
+        {"reinspect_ids": payload.reinspect_ids or []},
+    )
+    return ActionResult(ok=entry is not None, message=message, entry=entry)
+
+
+@router.post("/reinspect/{entry_id}/correction", response_model=ActionResult)
+def reinspect_correction(entry_id: int, payload: CorrectionPayload) -> ActionResult:
+    """复检结论更正：stage=begin 发起（进入更正中），stage=complete 完成。"""
+    service = service_for("reinspect")
+    if service is None:
+        raise HTTPException(status_code=404, detail="复检模块未注册")
+    stage = (payload.remark or "begin").strip()
+    if stage == "begin":
+        entry, message = service.begin_correction(entry_id, payload.更正原因 or "")
+    elif stage == "complete":
+        entry, message = service.complete_correction(entry_id, payload.复检结果 or "")
+    else:
+        return ActionResult(ok=False, message="更正阶段仅支持 begin / complete")
     return ActionResult(ok=entry is not None, message=message, entry=entry)
 
 

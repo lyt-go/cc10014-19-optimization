@@ -53,7 +53,15 @@
           :data-status="String(row.status)"
         >
           <td v-for="column in meta.fields" :key="column">{{ row[column] ?? '—' }}</td>
-          <td>{{ row.status }}</td>
+          <td>
+            {{ row.status }}
+            <div v-if="meta.key === 'acceptance_record' && receiptOf(row)" class="receipt-hint" data-testid="receipt-hint">
+              <span :class="row['可归档'] ? 'badge ok' : 'badge warn'">
+                {{ row['可归档'] ? '可归档' : '暂不可归档' }}
+              </span>
+              <span class="muted">{{ receiptOf(row)?.['回执编号'] }}</span>
+            </div>
+          </td>
           <td class="row-actions">
             <button
               v-for="action in meta.actions"
@@ -65,6 +73,15 @@
             >
               {{ action }}
             </button>
+            <button
+              v-if="meta.key === 'acceptance_record'"
+              class="link sign-link"
+              type="button"
+              :data-testid="`open-signing-${row.id}`"
+              @click="signing.open(row)"
+            >
+              选择复检并签署
+            </button>
           </td>
         </tr>
         <tr v-if="!rows.length">
@@ -74,6 +91,8 @@
         </tr>
       </tbody>
     </table>
+
+    <SigningPanel v-if="meta.key === 'acceptance_record'" :panel="signing" />
 
     <div v-if="showCreate" class="modal-backdrop" data-testid="create-modal">
       <form class="modal" @submit.prevent="submitCreate">
@@ -107,6 +126,8 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/backend-service'
+import SigningPanel from '@/components/SigningPanel.vue'
+import { useSigningPanel } from '@/composables/useSigningPanel'
 import type { EntryRow } from '@/data/types'
 
 const props = defineProps<{ moduleKey: string }>()
@@ -119,6 +140,15 @@ const filterFields = meta.fields.slice(0, 3)
 const showCreate = ref(false)
 const creating = ref(false)
 const createValues = ref<Record<string, string>>({})
+
+// 验收签署：勾选复检并同步到签署审批待办
+const signing = useSigningPanel(reload)
+
+type Receipt = { 回执编号?: string; 可归档?: boolean }
+function receiptOf(row: EntryRow): Receipt | null {
+  const r = row['签署回执']
+  return r && typeof r === 'object' ? (r as Receipt) : null
+}
 
 const stats = computed(() => [
   { label: meta.metrics[0], value: total.value },
@@ -180,4 +210,10 @@ onMounted(reload)
 .create-field { display:flex; flex-direction:column; gap:4px; margin-bottom:12px; }
 .create-field span { font-size:13px; color:var(--text-secondary,#4a5568); }
 .create-field input { padding:6px 8px; border:1px solid var(--border-color,#e2e8f0); border-radius:4px; font-size:13px; }
+.sign-link { margin-left:8px; }
+.receipt-hint { display:flex; gap:6px; align-items:center; margin-top:4px; }
+.badge { font-size:11px; padding:1px 6px; border-radius:10px; }
+.badge.ok { background:#dcfce7; color:#15803d; }
+.badge.warn { background:#fef3c7; color:#b45309; }
+.muted { color:var(--muted,#64748b); font-size:11px; }
 </style>

@@ -77,8 +77,18 @@ class BaseModuleService:
         rows.append(entry)
         return entry, []
 
-    def run_action(self, entry_id: int, action: str) -> tuple[dict[str, Any] | None, str]:
-        """执行动作：幂等检查 -> 前置校验 -> 状态变更 -> 跨模块联动。"""
+    def run_action(
+        self,
+        entry_id: int,
+        action: str,
+        context: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any] | None, str]:
+        """执行动作：幂等检查 -> 前置校验 -> 状态变更 -> 跨模块联动。
+
+        context 通过条目上的保留键 ``_action_context`` 透传给本模块的
+        cross_module_verify / cross_module_effect，用于承载动作附带参数
+        （例如验收签署勾选的复检编号），不改变既有子类的方法签名。
+        """
         # 幂等检查
         if store.check_idempotent(self.MODULE, entry_id, action):
             entry = store.find(self.MODULE, entry_id)
@@ -94,29 +104,37 @@ class BaseModuleService:
         if target is None:
             return None, f"动作「{action}」不属于{self.MODULE}可执行范围"
 
-        # 跨模块前置校验
-        passed, reason = self.cross_module_verify(entry_id, action, entry)
-        if not passed:
-            return None, reason
-
-        # 获取资源锁
-        resource_key = f"{self.MODULE}:{entry_id}"
-        if not store.acquire_resource(resource_key):
-            return None, "资源正在被其他操作处理，请稍后重试"
-
+        # 透传附加上下文（保留键，不会写入对外字段）
+        entry["_action_context"] = context or {}
         try:
-            entry["status"] = target
-            entry["pending"] = target != self.STATUS_ORDER[-1]
-            entry["abnormal"] = action in self.NEGATIVE_ACTIONS
+            # 跨模块前置校验
+            passed, reason = self.cross_module_verify(entry_id, action, entry)
+            if not passed:
+                return None, reason
 
-            # 执行跨模块副作用
-            self.cross_module_effect(entry_id, action, entry)
+            # 获取资源锁
+            resource_key = f"{self.MODULE}:{entry_id}"
+            if not store.acquire_resource(resource_key):
+                return None, "资源正在被其他操作处理，请稍后重试"
 
-            # 标记幂等
-            store.mark_idempotent(self.MODULE, entry_id, action)
-            return entry, f"{self.ENTITY}已{action}"
+            try:
+                entry["status"] = target
+                entry["pending"] = target != self.STATUS_ORDER[-1]
+                entry["abnormal"] = action in self.NEGATIVE_ACTIONS
+
+                # 执行跨模块副作用
+                self.cross_module_effect(entry_id, action, entry)
+
+                # 标记幂等
+                store.mark_idempotent(self.MODULE, entry_id, action)
+                return entry, f"{self.ENTITY}已{action}"
+            finally:
+                store.release_resource(resource_key)
         finally:
-            store.release_resource(resource_key)
+            # 释放跨模块临界区锁（例如复检结论更正闸门），避免泄漏
+            for lock_key in list(entry.get("_action_context", {}).get("_held_locks", [])):
+                store.release_resource(lock_key)
+            entry.pop("_action_context", None)
 
     def domain_snapshot(self) -> dict[str, Any]:
         """返回本模块的状态统计与业务对象，供其他模块读取。"""

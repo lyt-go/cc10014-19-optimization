@@ -29,10 +29,64 @@ export async function runAction(
   key: string,
   id: number,
   action: string,
+  extra: Record<string, unknown> = {},
 ): Promise<ActionResult> {
   const response = await request(`/api/${key}/${id}/actions`, {
     method: 'POST',
-    body: JSON.stringify({ action }),
+    body: JSON.stringify({ action, ...extra }),
+  })
+  return await response.json()
+}
+
+/** 验收签署候选：同工序、同检查项目可用于签署的复检及不可用原因。 */
+export type SigningOption = {
+  复检id: number
+  复检编号: string
+  原检查编号: string
+  检查工序: string
+  检查项目: string
+  检查人: string
+  检查日期: string
+  复检结果: string
+  status: string
+  可覆盖缺陷?: string
+  不可用原因?: string
+}
+
+export type SigningOptions = {
+  acceptance_id: number
+  验收工序: string
+  options: SigningOption[]
+  unavailable: SigningOption[]
+  defects: { 原检查编号: string; 检查项目: string; 检查人: string; 缺陷: string; 待处理: boolean }[]
+  pending_items: { 原检查编号: string; 检查项目: string; 缺陷: string }[]
+}
+
+export async function fetchSigningOptions(acceptanceId: number): Promise<SigningOptions> {
+  const response = await request(`/api/acceptance_record/${acceptanceId}/signing-options`)
+  if (!response.ok) throw new Error('复检候选读取失败')
+  return await response.json()
+}
+
+export async function signAcceptance(
+  acceptanceId: number,
+  reinspectIds: number[],
+): Promise<ActionResult> {
+  const response = await request(`/api/acceptance_record/${acceptanceId}/sign`, {
+    method: 'POST',
+    body: JSON.stringify({ action: '签署验收', reinspect_ids: reinspectIds }),
+  })
+  return await response.json()
+}
+
+export async function correctReinspect(
+  reinspectId: number,
+  stage: 'begin' | 'complete',
+  payload: { 更正原因?: string; 复检结果?: string } = {},
+): Promise<ActionResult> {
+  const response = await request(`/api/reinspect/${reinspectId}/correction`, {
+    method: 'POST',
+    body: JSON.stringify({ ...payload, remark: stage }),
   })
   return await response.json()
 }

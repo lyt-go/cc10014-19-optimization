@@ -8,6 +8,7 @@ from app.services.material_verify import MaterialVerifyService
 from app.services.craftsman_assign import CraftsmanAssignService
 from app.services.work_sequence import WorkSequenceService
 from app.services.quality_inspect import QualityInspectService
+from app.services.reinspect import ReinspectService
 from app.services.historical_drawing import HistoricalDrawingService
 from app.services.component_registry import ComponentRegistryService
 from app.services.env_monitor import EnvMonitorService
@@ -28,6 +29,7 @@ SERVICES: dict[str, BaseModuleService] = {
     "craftsman_assign": CraftsmanAssignService(),
     "work_sequence": WorkSequenceService(),
     "quality_inspect": QualityInspectService(),
+    "reinspect": ReinspectService(),
     "historical_drawing": HistoricalDrawingService(),
     "component_registry": ComponentRegistryService(),
     "env_monitor": EnvMonitorService(),

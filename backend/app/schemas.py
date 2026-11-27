@@ -29,3 +29,17 @@ class EntryPayload(BaseModel):
 class ActionPayload(BaseModel):
     action: str
     remark: str | None = None
+
+
+class SignActionPayload(BaseModel):
+    """验收签署动作：除动作名外携带验收员勾选的复检依据编号。"""
+    action: str
+    remark: str | None = None
+    reinspect_ids: list[int] | None = None
+
+
+class CorrectionPayload(BaseModel):
+    """复检结论更正：发起时记录原因，完成时给出更正后的复检结论。"""
+    更正原因: str | None = None
+    复检结果: str | None = None
+    remark: str | None = None

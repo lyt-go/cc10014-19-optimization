@@ -1,9 +1,14 @@
-"""质量检查领域服务：检查后自动关联验收记录创建、联动修缮日志工序完成状态。"""
+"""质量检查领域服务：检查后自动关联验收记录创建、联动修缮日志工序完成状态。
+
+复检（reinspect 模块）会在检查清单里保留一份镜像记录，两边共用同一
+「复检编号」；本服务在出具报告时跳过镜像复检记录，避免重复触发验收创建。
+"""
 from __future__ import annotations
 
 from typing import Any
 
 from app.services.base import BaseModuleService
+from app.services.reinspect import ReinspectService
 from app.store import store
 
 
@@ -11,11 +16,22 @@ class QualityInspectService(BaseModuleService):
     MODULE = "quality_inspect"
     ENTITY = "检查记录"
     OPERATION_TERM = "开始检查"
-    LIST_FIELDS = ["检查工序", "检查项目", "技术标准", "检查结果", "不合格项", "检查人", "检查日期", "备注说明"]
+    LIST_FIELDS = [
+        "检查编号", "复检编号", "复检类型", "原检查编号",
+        "检查工序", "检查项目", "技术标准", "检查结果", "不合格项",
+        "检查人", "检查日期", "备注说明",
+    ]
     REQUIRED_FIELDS = ["检查工序", "检查项目", "技术标准"]
     STATUS_ORDER = ["待检查", "检查中", "已通过", "需整改"]
     ACTION_RULES = {"开始检查": "检查中", "出具报告": "已通过", "退回整改": "需整改"}
     NEGATIVE_ACTIONS = []
+
+    def create_entry(self, values: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
+        entry, missing = super().create_entry(values)
+        if entry is not None:
+            # 兼容已有检查项目：统一回填检查编号，作为复检追溯锚点
+            entry["检查编号"] = ReinspectService.ensure_inspect_no(entry)
+        return entry, missing
 
     def cross_module_verify(
         self, entry_id: int, action: str, entry: dict[str, Any]
@@ -39,6 +55,9 @@ class QualityInspectService(BaseModuleService):
     ) -> list[dict]:
         effects = []
         if action == "出具报告":
+            # 复检镜像记录由复检服务驱动，不重复触发验收创建
+            if entry.get("_reinspect_id") or entry.get("复检编号"):
+                return effects
             process = entry.get("检查工序", "")
             # 1. 自动创建验收记录
             acc_rows = store.rows("acceptance_record")
